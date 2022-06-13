@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 def remove_id(word):
     """Removes the numeric suffix from the parsed recognized words: e.g. 'word-2' > 'word' """
-    return word.count("-") == 0 and word or word[0:word.rindex("-")]
+    return word.count("-") == 0 and word or word[:word.rindex("-")]
 
 
 def parse_bracketed(s):
@@ -74,30 +74,30 @@ def parse_parser_results(text):
     state = STATE_START
     for line in text.encode('utf-8').split("\n"):
         line = line.strip()
-        
+
         if line.startswith("Sentence #"):
             sentence = {'words':[], 'parsetree':[], 'dependencies':[]}
             results["sentences"].append(sentence)
             state = STATE_TEXT
-        
+
         elif state == STATE_TEXT:
             sentence['text'] = line
             state = STATE_WORDS
-        
+
         elif state == STATE_WORDS:
             if not line.startswith("[Text="):
                 raise Exception('Parse error. Could not find "[Text=" in: %s' % line)
             for s in WORD_PATTERN.findall(line):
                 sentence['words'].append(parse_bracketed(s))
             state = STATE_TREE
-        
+
         elif state == STATE_TREE:
             if len(line) == 0:
                 state = STATE_DEPENDENCY
                 sentence['parsetree'] = " ".join(sentence['parsetree'])
             else:
                 sentence['parsetree'].append(line)
-        
+
         elif state == STATE_DEPENDENCY:
             if len(line) == 0:
                 state = STATE_COREFERENCE
@@ -105,8 +105,8 @@ def parse_parser_results(text):
                 split_entry = re.split("\(|, ", line[:-1])
                 if len(split_entry) == 3:
                     rel, left, right = map(lambda x: remove_id(x), split_entry)
-                    sentence['dependencies'].append(tuple([rel,left,right]))
-        
+                    sentence['dependencies'].append((rel, left, right))
+
         elif state == STATE_COREFERENCE:
             if "Coreference set" in line:
                 if 'coref' not in results:
@@ -118,7 +118,7 @@ def parse_parser_results(text):
                     src_i, src_pos, src_l, src_r = int(src_i)-1, int(src_pos)-1, int(src_l)-1, int(src_r)-1
                     sink_i, sink_pos, sink_l, sink_r = int(sink_i)-1, int(sink_pos)-1, int(sink_l)-1, int(sink_r)-1
                     coref_set.append(((src_word, src_i, src_pos, src_l, src_r), (sink_word, sink_i, sink_pos, sink_l, sink_r)))
-    
+
     return results
 
 
@@ -137,31 +137,34 @@ class StanfordCoreNLP(object):
                 "joda-time.jar",
                 "xom.jar",
                 "jollyday.jar"]
-       
+
         # if CoreNLP libraries are in a different directory,
         # change the corenlp_path variable to point to them
         if not corenlp_path:
             corenlp_path = "./stanford-corenlp-full-2014-08-27/"
-        
+
         java_path = "java"
         classname = "edu.stanford.nlp.pipeline.StanfordCoreNLP"
         # include the properties file, so you can change defaults
         # but any changes in output format will break parse_parser_results()
         props = "-props default.properties" 
-        
+
         # add and check classpaths
         jars = [corenlp_path + jar for jar in jars]
         for jar in jars:
             if not os.path.exists(jar):
-                logger.error("Error! Cannot locate %s" % jar)
+                logger.error(f"Error! Cannot locate {jar}")
                 sys.exit(1)
-        
+
         # spawn the server
-        start_corenlp = "%s -Xmx1800m -cp %s %s %s" % (java_path, ':'.join(jars), classname, props)
+        start_corenlp = (
+            f"{java_path} -Xmx1800m -cp {':'.join(jars)} {classname} {props}"
+        )
+
         if VERBOSE: 
             logger.debug(start_corenlp)
         self.corenlp = pexpect.spawn(start_corenlp)
-        
+
         # show progress bar while loading the models
         widgets = ['Loading Models: ', Fraction()]
         pbar = ProgressBar(widgets=widgets, maxval=5, force_update=True).start()
@@ -253,9 +256,9 @@ if __name__ == '__main__':
     options, args = parser.parse_args()
     server = jsonrpc.Server(jsonrpc.JsonRpc20(),
                             jsonrpc.TransportTcpIp(addr=(options.host, int(options.port))))
-    
+
     nlp = StanfordCoreNLP()
     server.register_function(nlp.parse)
-    
-    logger.info('Serving on http://%s:%s' % (options.host, options.port))
+
+    logger.info(f'Serving on http://{options.host}:{options.port}')
     server.serve()
